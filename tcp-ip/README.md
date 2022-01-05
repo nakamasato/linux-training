@@ -321,7 +321,8 @@ ns1 (ns1-veth0) <--> ns2 (ns2-veth0)
 
 ### 3.2. About Router
 
-**Router** is necessary only when connecting different segments.
+**Router**: a device to transmit packets in the network layer
+Router is necessary only when connecting different segments.
 What is a segment (also called **network** or **subnetwork**)?
 
 IP address (e.g. `192.168.123.132`): Network address (e.g. `11000000.10101000.01111011.00000000` or `192.168.123.0`) + Host address (e.g. `00000000.00000000.00000000.10000100` or `000.000.000.132`)
@@ -562,18 +563,237 @@ This *network* means the *segment*.
 
 We've done static routing. <-> Dynamic routing uses a routing protocol such as BGP (Border Gateway Protocol) or OSPF(Open Shortest Path First).
 
-### 3.6. WrapUp
-Commands:
+## 4. Ethernet
+
+### 4.1. The role of Ethernet
+
+The role of the Ethernet: *"Deliver a parcel to neighborhood"*
+
+- Truck = Frame
+- Parcel = Packet, Datagram
+
+In real post delivery, one parcel is ususally delivered via multiple delivery trucks. Same for Ethernet. In the Ethernet, MAC address is used for an identifier.
+
+### 4.2. See a frame
+
+```
+sudo ip netns exec ns1 tcpdump -tnel -i ns1-veth0 icmp
+```
+
+```
+sudo ip netns exec ns1 ping -c 1 192.0.2.2 -I 192.0.2.1
+```
+
+`tcpdump`:
+- `-e`: Ethernet header
+- `-l`: add when checking in network namespace
+
+### 4.3. Get MAC address
+
+ARP(Address Resolution Protocol): IP -> MAC address
+
+Delete cache for MAC address:
+```
+sudo ip netns exec ns1 ip neigh flush all
+```
+
+```
+sudo ip netns exec ns1 tcpdump -tnel -i ns1-veth0 icmp or arp
+```
+
+You can check how ip address is resolved to MAC address.
+
+```
+02:29:e0:c3:be:94 > 52:54:00:12:35:03, ethertype ARP (0x0806), length 42: Request who-has 10.0.2.3 tell 10.0.2.15, length 28
+52:54:00:12:35:03 > 02:29:e0:c3:be:94, ethertype ARP (0x0806), length 60: Reply 10.0.2.3 is-at 52:54:00:12:35:03, length 46
+```
+
+You can also check the frame change with multiple network segments. -> MAC Address for the destination and source are changed while IP address of them remains same.
+
+### 4.5. Bridge
+
+- **veth interface**: a pair of two network interfaces.
+- **bridge**: Manage which port is connected to which MAC address. Transmit frames to a proper port according to the MAC address.
+
+Bridge enables to connect more than two network namepsaces in one segment
+
+Example:
+
+![](4-5-bridge.drawio.svg)
+
+1. Set `ns1` ~ `ns3` and `bridge` namespaces with veths.
+
+    ```
+    sudo ip --all netns delete
+    sudo ip netns add ns1
+    sudo ip netns add ns2
+    sudo ip netns add ns3
+    sudo ip netns add bridge
+    sudo ip link add ns1-veth0 type veth peer name ns1-br0
+    sudo ip link add ns2-veth0 type veth peer name ns2-br0
+    sudo ip link add ns3-veth0 type veth peer name ns3-br0
+    sudo ip link set ns1-veth0 netns ns1
+    sudo ip link set ns2-veth0 netns ns2
+    sudo ip link set ns3-veth0 netns ns3
+    sudo ip link set ns1-br0 netns bridge
+    sudo ip link set ns2-br0 netns bridge
+    sudo ip link set ns3-br0 netns bridge
+    sudo ip netns exec ns1 ip link set ns1-veth0 up
+    sudo ip netns exec ns2 ip link set ns2-veth0 up
+    sudo ip netns exec ns3 ip link set ns3-veth0 up
+    sudo ip netns exec bridge ip link set ns1-br0 up
+    sudo ip netns exec bridge ip link set ns2-br0 up
+    sudo ip netns exec bridge ip link set ns3-br0 up
+    sudo ip netns exec ns1 ip address add 192.0.2.1/24 dev ns1-veth0
+    sudo ip netns exec ns2 ip address add 192.0.2.2/24 dev ns2-veth0
+    sudo ip netns exec ns3 ip address add 192.0.2.3/24 dev ns3-veth0
+    sudo ip netns exec ns1 ip link set dev ns1-veth0 address 00:00:5E:00:53:01
+    sudo ip netns exec ns2 ip link set dev ns2-veth0 address 00:00:5E:00:53:02
+    sudo ip netns exec ns3 ip link set dev ns3-veth0 address 00:00:5E:00:53:03
+    ```
+
+1. Create and set Bridge:
+
+    ```
+    sudo ip netns exec bridge ip link add dev br0 type bridge
+    sudo ip netns exec bridge ip link set br0 up
+    ```
+1. Connect bridge and veths.
+    ```
+    sudo ip netns exec bridge ip link set ns1-br0 master br0
+    sudo ip netns exec bridge ip link set ns2-br0 master br0
+    sudo ip netns exec bridge ip link set ns3-br0 master br0
+    ```
+
+1. Check communication
+    ```
+    sudo ip netns exec ns1 ping -c 1 192.0.2.2 -I 192.0.2.1
+    sudo ip netns exec ns2 ping -c 1 192.0.2.3 -I 192.0.2.2
+    sudo ip netns exec ns3 ping -c 1 192.0.2.1 -I 192.0.2.3
+    ```
+
+1. Check MAC address table in `br0`:
+
+    ```
+    sudo ip netns exec bridge bridge fdb show br br0 | grep -i 00:00:5e
+    00:00:5e:00:53:01 dev ns1-br0 master br0
+    00:00:5e:00:53:02 dev ns2-br0 master br0
+    00:00:5e:00:53:03 dev ns3-br0 master br0
+    ```
+
+## 5. Protocol In Transport Layer
+
+### 5.1. UDP
+
+- UDP can help distinguish applications.
+- Ethernet / UDP / IP: Ethernet Header - IP Header - UDP Header + Data
+- UDP header has port number for the application (`source port`, `destination port`).
+- Metaphor
+    - ip address - address of an apartment
+    - port - room number of an apartment
+    - application - resident
+- Ephemeral port: automatically assigned port
+- Port:
+    - 0-1023: System port or well-known port
+    - 1024-49151: User port or registered port
+    - 49152-65535: Dynamic port or private port
+- Example: DNS is upper protocol using UDP. -> Port 53
+
+Practice:
+1. Prepare server (-u: UDP, -l: server, -n: noDNS)
+    ```
+    nc -ulnv 127.0.0.1 54321
+    ```
+1. Connect the server (client)
+    ```
+    nc -u 127.0.0.1 54321
+    ```
+1. Packet capturing
+    ```
+    sudo tcpdump -i lo -tnlA "udp and port 54321"
+    ```
+1. Write `hello, world!` in the client-side.
+    1. you can see `hello,world!` in server-side
+    1. Packet capturing
+        ```
+        IP 127.0.0.1.32896 > 127.0.0.1.54321: UDP, length 13
+        E..)..@.@..............1...(hello,world!
+        ```
+1. Write `hey` from server-side.
+    1. client-side receives the message.
+    1. Packet capturing
+        ```
+        IP 127.0.0.1.54321 > 127.0.0.1.32896: UDP, length 4
+        E.. .j@.@.X`.........1......hey
+        ```
+### 5.2. TCP
+
+- connection-type protocol
+- error connection or packet sequencing
+- TCP header: more fields than UDP (e.g. sequence number, acknowledgement number...)
+
+Example:
+1. Server
+    ```
+    nc -lnv 127.0.0.1 54321
+    ```
+1. Packet capturing
+    ```
+    sudo tcpdump -i lo -tnlA "tcp and port 54321"
+    ```
+1. Client
+    ```
+    nc 127.0.0.154321
+    ```
+
+    Once you run the command, you'll see mutiple packet transmission: (three way handshake)
+
+    ```
+    IP 127.0.0.1.42524 > 127.0.0.1.54321: Flags [S], seq 3248014050, win 65495, options [mss 65495,sackOK,TS val 3622311719 ecr 0,nop,wscale 7], length 0
+    E..<..@.@..............1.............0.........
+    ...'........
+    IP 127.0.0.1.54321 > 127.0.0.1.42524: Flags [S.], seq 3423863984, ack 3248014051, win 65483, options [mss 65495,sackOK,TS val 3622311719 ecr 3622311719,nop,wscale 7], length 0
+    E..<..@.@.<..........1...............0.........
+    ...'...'....
+    IP 127.0.0.1.42524 > 127.0.0.1.54321: Flags [.], ack 1, win 512, options [nop,nop,TS val 3622311719 ecr 3622311719], length 0
+    E..4..@.@..............1.............(.....
+    ...'...'
+    ```
+
+    Flags:
+        - `S`: SYN (synchronize sequence numbers),
+        - `.`: ACK(acknowledgment field significant)
+        - `P`: PSH (process the data in the receiver immediately)
+1. Hello world from client.
+    1. The server receives
+    1. Two packets:
+        ```
+        IP 127.0.0.1.42524 > 127.0.0.1.54321: Flags [P.], seq 1:13, ack 1, win 512, options [nop,nop,TS val 3622523843 ecr 3622311719], length 12
+        E..@..@.@..............1.............4.....
+        ..S....'hello,world
+
+        IP 127.0.0.1.54321 > 127.0.0.1.42524: Flags [.], ack 13, win 512, options [nop,nop,TS val 3622523843 ecr 3622523843], length 0
+        E..4    \@.@.3f.........1...............(.....
+        ..S...S.
+        ```
+## Commands
+
 1. `sudo ip netns add <netns>`: add network namespace
 1. `sudo ip netns list`: check network namespace
 1. `sudo ip link add <veth0> type veth peer name <veth1>`: add a pair of veth
 1. `sudo ip link set <veth> netns <netns>`: Set a veth to a network namespace
 1. `sudo ip netns exec <netns> ip address add <ip address> dev <veth>`: Assign an IP address to a veth.
 1. `sudo ip netns exec <netns> ip route add <ip range> via <ip>`: add routing entry to the route table.
-1. `sudo ip netns exec <netns> ip route list`: check the routing table
+1. `sudo ip netns exec <netns> ip route show`: check the routing table
 1. `sudo ip netns exec <netns> ip address show`: check address
 1. `sudo ip netns exec <netns> ip link show`: network interface
 1. `sudo ip netns exec <netns> sysctl net.ipv4.ip_forward=1`: enable ip forward (for router)
+1. `sudo ip netns exec <netns> ip link set dev <veth> address <mac address>`: Set veth MAC address e.g. `00:00:5E:0053:11`
+1. `sudo ip netns exec <netns> tcpdump -tnel -i <veth> icmp or arp`: Capture packet for icmp or arp (How to resolve MAC address of an ip address)
+1. `sudo ip netns exec <netns> bridge fdb show`: show filtering database (MAC address - interface list)
+
+
+## Terms
 
 ## Reference
 - [立ち読み版の PDF](https://drive.google.com/file/d/1Z8RUTAhEWoKcHG9IjtsVUOTxfZqgSymJ/view)
@@ -584,3 +804,4 @@ Commands:
 - [Understand TCP/IP addressing and subnetting basics](https://docs.microsoft.com/en-us/troubleshoot/windows-client/networking/tcpip-addressing-and-subnetting#:~:text=how%20it's%20organized.-,IP%20addresses%3A%20Networks%20and%20hosts,by%20periods%2C%20such%20as%20192.168.)
 - [Linux IP forwarding – How to Disable/Enable using net.ipv4.ip_forward](https://linuxconfig.org/how-to-turn-on-off-ip-forwarding-in-linux)
 - [sysctl](https://man7.org/linux/man-pages/man8/sysctl.8.html)
+- [show bridge fdb](https://www.alaxala.com/jp/techinfo/archive/manual/AX2000R/HTML/COMREF2/0174.HTM)
