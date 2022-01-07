@@ -776,6 +776,306 @@ Example:
         E..4    \@.@.3f.........1...............(.....
         ..S...S.
         ```
+
+## 6. Protocol in Application Layer
+
+### 6.1. HTTP
+
+```
+echo -en "GET / HTTP/1.0\r\n\r\n" | nc 127.0.0.1 80
+```
+
+```
+curl -X GET -D - http://127.0.0.1
+```
+
+### 6.2. DNS
+
+```
+sudo tcpdump -tnl -i any "udp and port 53"
+```
+
+```
+dig +short @8.8.8.8 example.org A
+```
+
+### 6.3. DHCP
+
+**Dynamic Host Configuration Protocol** automates the necessary configuration for a computer to use TCP/IP network.
+
+1. Assign IP address to network interfaces.
+1. Add routing entries to a routing table.
+1. Specify DNS server for name resolution.
+
+Example:
+1. Delete all network namespaces.
+1. Create two network namespaces (`server` and `client`).
+1. Create network interface `s-veth0` and `c-veth0`.
+1. Add the veths to network namespaces.
+1. Set the veths' state up.
+1. Assign IP address `192.0.2.254/24` to `s-veth0`.
+1. Start DHCP server with `dnsmasq` command.
+    ```
+    sudo ip netns exec server dnsmasq --dhcp-range=192.0.2.100,192.0.2.200,255.255.255.0 --interface=s-veth0 --port 0 --no-resolv --no-daemon
+    ```
+1. Client
+    ```
+    sudo ip netns exec client dhclient -d c-veth0
+    ```
+    Logs:
+    ```
+    Internet Systems Consortium DHCP Client 4.3.5
+    Copyright 2004-2016 Internet Systems Consortium.
+    All rights reserved.
+    For info, please visit https://www.isc.org/software/dhcp/
+
+    Listening on LPF/c-veth0/d2:09:03:e5:0d:68
+    Sending on   LPF/c-veth0/d2:09:03:e5:0d:68
+    Sending on   Socket/fallback
+    DHCPDISCOVER on c-veth0 to 255.255.255.255 port 67 interval 3 (xid=0x63b4a619)
+    DHCPDISCOVER on c-veth0 to 255.255.255.255 port 67 interval 4 (xid=0x63b4a619)
+    DHCPREQUEST of 192.0.2.183 on c-veth0 to 255.255.255.255 port 67 (xid=0x19a6b463)
+    DHCPOFFER of 192.0.2.183 from 192.0.2.254
+    DHCPACK of 192.0.2.183 from 192.0.2.254
+    bound to 192.0.2.183 -- renewal in 1597 seconds.
+    ```
+
+    -> `192.0.2.183` was assigned.
+
+    Logs in server:
+    ```
+    dnsmasq-dhcp: DHCP, IP range 192.0.2.100 -- 192.0.2.200, lease time 1h
+    dnsmasq-dhcp: DHCPDISCOVER(s-veth0) d2:09:03:e5:0d:68
+    dnsmasq-dhcp: DHCPOFFER(s-veth0) 192.0.2.183 d2:09:03:e5:0d:68
+    dnsmasq-dhcp: DHCPDISCOVER(s-veth0) d2:09:03:e5:0d:68
+    dnsmasq-dhcp: DHCPOFFER(s-veth0) 192.0.2.183 d2:09:03:e5:0d:68
+    dnsmasq-dhcp: DHCPREQUEST(s-veth0) 192.0.2.183 d2:09:03:e5:0d:68
+    dnsmasq-dhcp: DHCPACK(s-veth0) 192.0.2.183 d2:09:03:e5:0d:68 ubuntu-bionic
+    ```
+
+1. Check the client's ip address.
+
+    ```
+    sudo ip netns exec client ip address show
+    1: lo: <LOOPBACK> mtu 65536 qdisc noop state DOWN group default qlen 1000
+        link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    11: c-veth0@if12: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+        link/ether d2:09:03:e5:0d:68 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+        inet 192.0.2.183/24 brd 192.0.2.255 scope global c-veth0
+        valid_lft forever preferred_lft forever
+        inet6 fe80::d009:3ff:fee5:d68/64 scope link
+        valid_lft forever preferred_lft forever
+    ```
+
+1. Check route.
+
+    ```
+    sudo ip netns exec client ip route show
+    default via 192.0.2.254 dev c-veth0
+    192.0.2.0/24 dev c-veth0 proto kernel scope link src 192.0.2.183
+    ```
+
+Alternative for DHCP would be IPCP(Internet Protocol Control Protocol) with PPPoE communication. <- IPv4
+
+## 7. NAT
+
+Network Address Translation
+
+The operation to replace the field for IP address in the header of a packet.
+
+NAPT (Network Address Port Translation): able to share small number of global ip addresses and plenty of private adresses
+
+### 7.1 Source NAT
+
+- Replace the source IP address. (translate an private ip address to a global ip address)
+- NAPT -> IP address & Port number - Global IP address
+- checksum for verification
+
+Example:
+
+LAN - Router - WAN
+
+1. Create network namespaces `wan`, `lan`, `router`
+1. Create veth interface `wan-veth0`, `router-veth0`, `router-veth1`, `lan-veth0`
+1. Add the veths to network namespaces
+1. Set the veths up
+1. Assign ip address `192.0.2.1/24`, `203.0.113.1/24`, `192.0.2.254/24`, and `203.0.113.254/24` to `lan-veth0`, `wan-veth0`, `router-veth0`, and `router-veth1`, respectively.
+1. Set router for `lan` and `wan`.
+1. Check NAT
+    ```
+    sudo ip netns exec router iptables -t nat -L
+    Chain PREROUTING (policy ACCEPT)
+    target     prot opt source               destination
+
+    Chain INPUT (policy ACCEPT)
+    target     prot opt source               destination
+
+    Chain OUTPUT (policy ACCEPT)
+    target     prot opt source               destination
+
+    Chain POSTROUTING (policy ACCEPT)
+    target     prot opt source               destination
+    ```
+
+    No process in NAT table at the point of initialization.
+
+1. **Add NAT rules**
+
+    ```
+    sudo ip netns exec router iptables -t nat -A POSTROUTING -s 192.0.2.0/24 -o gw-veth1 -j MASQUERADE
+    ```
+
+    - `-A`: Chain to add the process. `POSTROUTING`: after routing and bwfore the packet goes out from the interface.
+    - `-s`: The process target: source IP
+    - `-o`: output network interface
+    - `-j`: the process type. `MASQUERADE` <- source NAT
+
+    List:
+
+    ```
+    sudo ip netns exec router sudo iptables -t nat -v -L -n --line-number
+    ```
+
+    Delete:
+
+    ```
+    sudo ip netns exec router sudo iptables -t nat --delete POSTROUTING 1
+    ```
+1. Ping from lan to wan
+
+    1. tcpdump in lan
+        ```
+        sudo ip netns exec lan tcpdump -tnl -i lan-veth0 icmp
+        ```
+    1. tcpdump in wan
+        ```
+        sudo ip netns exec wan tcpdump -tnl -i wan-veth0 icmp
+        ```
+    1. ping (`192.0.2.1` -> `203.0.113.1`)
+        ```
+        sudo ip netns exec lan ping -c 1 203.0.113.1
+        ```
+    1. tcpdump in lan (`192.0.2.1` -> `203.0.113.1`)
+        ```
+        IP 192.0.2.1 > 203.0.113.1: ICMP echo request, id 22020, seq 1, length 64
+        IP 203.0.113.1 > 192.0.2.1: ICMP echo reply, id 22020, seq 1, length 64
+        ```
+    1. tcpdump in wan (`203.0.113.254` -> `203.0.113.1`)
+        ```
+        IP 203.0.113.254 > 203.0.113.1: ICMP echo request, id 22020, seq 1, length 64
+        IP 203.0.113.1 > 203.0.113.254: ICMP echo reply, id 22020, seq 1, length 64
+        ```
+
+    From `wan`, the traffic is as if from `203.0.113.254` (global ip address assigned to the router). source NAT worked!
+
+
+<details><summary>answer</summary>
+
+```
+vagrant@ubuntu-bionic:~$ sudo ip --all netns delete
+vagrant@ubuntu-bionic:~$ sudo ip netns add lan
+vagrant@ubuntu-bionic:~$ sudo ip netns add wan
+vagrant@ubuntu-bionic:~$ sudo ip netns add router
+vagrant@ubuntu-bionic:~$ sudo ip link add lan-veth0 type veth peer name gw-veth0
+vagrant@ubuntu-bionic:~$ sudo ip link add wan-veth0 type veth peer name gw-veth1
+vagrant@ubuntu-bionic:~$ sudo ip link set lan-veth0 netns lan
+vagrant@ubuntu-bionic:~$ sudo ip link set gw-veth0 netns router
+vagrant@ubuntu-bionic:~$ sudo ip link set gw-veth1 netns router
+vagrant@ubuntu-bionic:~$ sudo ip link set wan-veth0 netns wan
+vagrant@ubuntu-bionic:~$ sudo ip netns exec ip link set lan-veth0 up
+Cannot open network namespace "ip": No such file or directory
+vagrant@ubuntu-bionic:~$ sudo ip netns exec lan ip link set lan-veth0 up
+vagrant@ubuntu-bionic:~$ sudo ip netns exec router ip link set gw-veth0 up vagrant@ubuntu-bionic:~$ sudo ip netns exec router ip link set gw-veth1 up vagrant@ubuntu-bionic:~$ sudo ip netns exec wan ip link set wan-veth0 up   vagrant@ubuntu-bionic:~$ sudo ip netns exec router ip address add 192.0.2.254/24 dev gw-veth0
+vagrant@ubuntu-bionic:~$ sudo ip netns exec router ip address add 203.0.113.254/24 dev gw-veth1
+vagrant@ubuntu-bionic:~$ sudo ip netns exec router sysctl net.ipv4.ip_forward=1
+net.ipv4.ip_forward = 1
+vagrant@ubuntu-bionic:~$ sudo ip netns exec lan ip address add 192.0.2.1/24 dev lan-veth0
+vagrant@ubuntu-bionic:~$ sudo ip netns exec lan ip route add default via 192.0.2.254
+vagrant@ubuntu-bionic:~$ sudo ip netns exec wan ip address add 203.0.113.1/24 dev wan-veth0
+vagrant@ubuntu-bionic:~$ sudo ip netns exec wan ip route add default via 203.0.113.254
+vagrant@ubuntu-bionic:~$ sudo ip netns exec router iptables -t nat -L
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination
+
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+vagrant@ubuntu-bionic:~$ sudo ip netns exec lan ping -c 1 203.0.113.1
+PING 203.0.113.1 (203.0.113.1) 56(84) bytes of data.
+64 bytes from 203.0.113.1: icmp_seq=1 ttl=63 time=0.062 ms
+
+--- 203.0.113.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.062/0.062/0.062/0.000 ms
+vagrant@ubuntu-bionic:~$ sudo ip netns exec wan ping -c 1 192.0.2.1
+PING 192.0.2.1 (192.0.2.1) 56(84) bytes of data.
+64 bytes from 192.0.2.1: icmp_seq=1 ttl=63 time=0.087 ms
+
+--- 192.0.2.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.087/0.087/0.087/0.000 ms
+vagrant@ubuntu-bionic:~$ sudo ip netns exec router iptables -t nat -A POSTROUTING -s 192.0.2.0/24 -o gw-veth1 -j MASQUERADE
+```
+
+</details>
+
+![](7-1-source-nat.drawio.svg)
+
+Source NAT can limit the access only from internal to internet. as the internet doesn't know which private ip to send.
+### 7.2 Destination NAT
+
+Enable to pass a packet to private ip and port by defining which public ip and port is mapped to which private ip as its destination.
+
+Continue from the last chapter
+
+1. Set DNAT.
+    ```
+    sudo ip netns exec router iptables -t nat -A PREROUTING -p tcp --dport 54321 -d 203.0.113.254 -j DNAT --to-destination 192.0.2.1
+    ```
+    - `PREROUTING`: the timing of processing -> before routing when a packet enters.
+    - `-p`: the target process protocol
+    - `-dport`: destionation port
+    - `-d`: the ip address to be replaced
+    - `-j`: processs type `DNAT`: destination NAT
+    - `--to-destination`: ip address
+
+    In short, `203.0.113.254:54321` -> `192.0.2.1:54321`
+
+1. server:
+    ```
+    sudo ip netns exec lan nc -lnv 54321
+    Connection from 203.0.113.1 40524 received!
+    ```
+1. client
+    ```
+    sudo ip netns exec wan nc 203.0.113.254 54321
+    ```
+1. tcpdump in `wan`
+    ```
+    sudo ip netns exec wan tcpdump -tnl -i wan-veth0 "tcp and port 54321"
+    ```
+1. tcpdump in `lan`
+    ```
+    sudo ip netns exec lan tcpdump -tnl -i lan-veth0 "tcp and port 54321"
+    ```
+1. write `hello, world!` from client side.
+
+    `tcpdump` in `wan`:
+    ```
+    IP 203.0.113.1.40524 > 203.0.113.254.54321: Flags [P.], seq 2111322458:2111322472, ack 2966483688, win 502, options [nop,nop,TS val 2199281660 ecr 3517145757], length 14
+    IP 203.0.113.254.54321 > 203.0.113.1.40524: Flags [.], ack 14, win 509, options [nop,nop,TS val 3517385168 ecr 2199281660], length 0
+    ```
+    tcpdump in `lan`:
+    ```
+    IP 203.0.113.1.40524 > 192.0.2.1.54321: Flags [P.], seq 2111322486:2111322500, ack 2966483688, win 502, options [nop,nop,TS val 2199563174 ecr 3517649642], length 14
+    IP 192.0.2.1.54321 > 203.0.113.1.40524: Flags [.], ack 14, win 509, options [nop,nop,TS val 3517666682 ecr 2199563174], length 0
+    ```
+
 ## Commands
 
 1. `sudo ip netns add <netns>`: add network namespace
