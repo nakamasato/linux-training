@@ -106,7 +106,7 @@ Skip
 ## 2. About TCP/IP
 
 1. TCP/IP is a generic term to cover protocols used for the Internet.
-1. *TCP/IP is English in the computer wourld, with which you can communicate with people/machines around the world.*
+1. *TCP/IP is English in the computer world, with which you can communicate with people/machines around the world.*
 1. TCP/IP: Transmission Control Protocol/Internet Protocol
     - Application
     - Transport
